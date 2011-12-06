@@ -1,0 +1,331 @@
+Index: unix/xserver/hw/vnc/Input.cc
+===================================================================
+--- unix/xserver/hw/vnc/Input.cc	(revision 4023)
++++ unix/xserver/hw/vnc/Input.cc	(revision 4024)
+@@ -116,21 +116,27 @@
+ 	}
+ }
+ 
+-/* Pointer device methods */
+-
+-PointerDevice::PointerDevice(rfb::VNCServerST *_server)
++InputDevice::InputDevice(rfb::VNCServerST *_server)
+ 	: server(_server), oldButtonMask(0)
+ {
+-	dev = AddInputDevice(
++	pointerDev = AddInputDevice(
+ #if XORG >= 16
+-			     serverClient,
++				    serverClient,
+ #endif
+-			     pointerProc, TRUE);
+-	RegisterPointerDevice(dev);
++				    pointerProc, TRUE);
++	RegisterPointerDevice(pointerDev);
++
++	keyboardDev = AddInputDevice(
++#if XORG >= 16
++				     serverClient,
++#endif
++				     keyboardProc, TRUE);
++	RegisterKeyboardDevice(keyboardDev);
++
+ 	initEventq();
+ }
+ 
+-void PointerDevice::ButtonAction(int buttonMask)
++void InputDevice::PointerButtonAction(int buttonMask)
+ {
+ 	int i, n;
+ 
+@@ -138,9 +144,9 @@
+ 		if ((buttonMask ^ oldButtonMask) & (1 << i)) {
+ 			int action = (buttonMask & (1<<i)) ?
+ 				     ButtonPress : ButtonRelease;
+-			n = GetPointerEvents(eventq, dev, action, i + 1,
++			n = GetPointerEvents(eventq, pointerDev, action, i + 1,
+ 					     POINTER_RELATIVE, 0, 0, NULL);
+-			enqueueEvents(dev, n);
++			enqueueEvents(pointerDev, n);
+ 
+ 		}
+ 	}
+@@ -148,7 +154,7 @@
+ 	oldButtonMask = buttonMask;
+ }
+ 
+-void PointerDevice::Move(const rfb::Point &pos)
++void InputDevice::PointerMove(const rfb::Point &pos)
+ {
+ 	int n, valuators[2];
+ 
+@@ -157,14 +163,14 @@
+ 
+ 	valuators[0] = pos.x;
+ 	valuators[1] = pos.y;
+-	n = GetPointerEvents(eventq, dev, MotionNotify, 0, POINTER_ABSOLUTE, 0,
++	n = GetPointerEvents(eventq, pointerDev, MotionNotify, 0, POINTER_ABSOLUTE, 0,
+ 			     2, valuators);
+-	enqueueEvents(dev, n);
++	enqueueEvents(pointerDev, n);
+ 
+ 	cursorPos = pos;
+ }
+ 
+-void PointerDevice::Sync(void)
++void InputDevice::PointerSync(void)
+ {
+ 	if (cursorPos.equals(oldCursorPos))
+ 		return;
+@@ -232,19 +238,6 @@
+ 	return Success;
+ }
+ 
+-/* KeyboardDevice methods */
+-
+-KeyboardDevice::KeyboardDevice(void)
+-{
+-	dev = AddInputDevice(
+-#if XORG >= 16
+-			     serverClient,
+-#endif
+-			     keyboardProc, TRUE);
+-	RegisterKeyboardDevice(dev);
+-	initEventq();
+-}
+-
+ #define IS_PRESSED(keyc, keycode) \
+ 	((keyc)->down[(keycode) >> 3] & (1 << ((keycode) & 7)))
+ 
+@@ -458,7 +451,7 @@
+ #define FREE_MAPS
+ #endif
+ 
+-void KeyboardDevice::keyEvent(rdr::U32 keysym, bool down)
++void InputDevice::keyEvent(rdr::U32 keysym, bool down)
+ {
+ 	DeviceIntPtr master;
+ 	KeyClassPtr keyc;
+@@ -484,16 +477,16 @@
+ 	}
+ 
+ #if XORG >= 17
+-	keyc = dev->u.master->key;
++	keyc = keyboardDev->u.master->key;
+ 
+-	keymap = XkbGetCoreMap(dev);
++	keymap = XkbGetCoreMap(keyboardDev);
+ 	if (!keymap) {
+ 		vlog.error("VNC keyboard device has no map");
+ 		return;
+ 	}
+ 
+-	if (generate_modkeymap(serverClient, dev, &modmap, &maxKeysPerMod)
+-	    != Success) {
++	if (generate_modkeymap(serverClient, keyboardDev, &modmap,
++	    		       &maxKeysPerMod) != Success) {
+ 		vlog.error("generate_modkeymap failed");
+ 		xfree(keymap->map);
+ 		xfree(keymap);
+@@ -502,7 +495,7 @@
+ 
+ 	state = XkbStateFieldFromRec(&keyc->xkbInfo->state);
+ #else
+-	keyc = dev->key;
++	keyc = keyboardDev->key;
+ 	state = keyc->state;
+ 	maxKeysPerMod = keyc->maxKeysPerModifier;
+ 	keymap = &keyc->curKeySyms;
+@@ -587,24 +580,24 @@
+ #if XORG == 15
+ 			master = inputInfo.keyboard;
+ #else
+-			master = dev->u.master;
++			master = keyboardDev->u.master;
+ #endif
+ 			void *slave = dixLookupPrivate(&master->devPrivates,
+ 						       CoreDevicePrivateKey);
+-			if (dev == slave) {
++			if (keyboardDev == slave) {
+ 				dixSetPrivate(&master->devPrivates,
+ 					      CoreDevicePrivateKey, NULL);
+ #if XORG == 15
+-				SwitchCoreKeyboard(dev);
++				SwitchCoreKeyboard(keyboardDev);
+ #else
+-				CopyKeyClass(dev, master);
++				CopyKeyClass(keyboardDev, master);
+ #endif
+ 			}
+ #else /* XORG < 17 */
+-			XkbApplyMappingChange(dev, keymap, minKeyCode,
++			XkbApplyMappingChange(keyboardDev, keymap, minKeyCode,
+ 					      maxKeyCode - minKeyCode + 1,
+ 					      NULL, serverClient);
+-			XkbCopyDeviceKeymap(dev->u.master, dev);
++			XkbCopyDeviceKeymap(keyboardDev->u.master, keyboardDev);
+ #endif /* XORG < 17 */
+ 			break;
+ 		}
+@@ -632,8 +625,8 @@
+ 		}
+ 	}
+ 
+-	ModifierState shift(dev, ShiftMapIndex);
+-	ModifierState modeSwitch(dev, modeSwitchMapIndex);
++	ModifierState shift(keyboardDev, ShiftMapIndex);
++	ModifierState modeSwitch(keyboardDev, modeSwitchMapIndex);
+ 	if (down) {
+ 		if (col & 1)
+ 			shift.press();
+@@ -649,8 +642,8 @@
+ 
+ 	vlog.debug("keycode %d %s", kc, down ? "down" : "up");
+ 	action = down ? KeyPress : KeyRelease;
+-	n = GetKeyboardEvents(eventq, dev, action, kc);
+-	enqueueEvents(dev, n);
++	n = GetKeyboardEvents(eventq, keyboardDev, action, kc);
++	enqueueEvents(keyboardDev, n);
+ 	
+ 	/*
+ 	 * When faking a modifier we are putting a keycode (which can
+Index: unix/xserver/hw/vnc/Input.h
+===================================================================
+--- unix/xserver/hw/vnc/Input.h	(revision 4023)
++++ unix/xserver/hw/vnc/Input.h	(revision 4024)
+@@ -1,5 +1,6 @@
+ /* Copyright (C) 2009 TightVNC Team
+- * Copyright (C) 2009 Red Hat, Inc.
++ * Copyright (C) 2009, 2010 Red Hat, Inc.
++ * Copyright (C) 2009, 2010 TigerVNC Team
+  *
+  * This is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -31,44 +32,37 @@
+ #include "input.h"
+ };
+ 
+-/* Represents pointer device. */
+-class PointerDevice {
++/* Represents input device (keyboard + pointer) */
++class InputDevice {
+ public:
+-	/* Create new PointerDevice instance. */
+-	PointerDevice(rfb::VNCServerST *_server);
++	/* Create new InputDevice instance */
++	InputDevice(rfb::VNCServerST *_server);
+ 
+ 	/*
+ 	 * Press or release buttons. Relationship between buttonMask and
+ 	 * buttons is specified in RFB protocol.
+ 	 */
+-	void ButtonAction(int buttonMask);
++	void PointerButtonAction(int buttonMask);
+ 
+ 	/* Move pointer to target location (point coords are absolute). */
+-	void Move(const rfb::Point &point);
++	void PointerMove(const rfb::Point &point);
+ 
+ 	/*
+ 	 * Send pointer position to clients. If not called then Move() calls
+-	 * won't be visible to clients.
++	 * won't be visible to VNC clients.
+ 	 */
+-	void Sync(void);
++	void PointerSync(void);
++
++	void KeyboardPress(rdr::U32 keysym) { keyEvent(keysym, true); }
++	void KeyboardRelease(rdr::U32 keysym) { keyEvent(keysym, false); }
+ private:
++	void keyEvent(rdr::U32 keysym, bool down);
++
+ 	rfb::VNCServerST *server;
+-	DeviceIntPtr dev;
++	DeviceIntPtr keyboardDev;
++	DeviceIntPtr pointerDev;
+ 	int oldButtonMask;
+ 	rfb::Point cursorPos, oldCursorPos;
+ };
+ 
+-/* Represents keyboard device. */
+-class KeyboardDevice {
+-public:
+-	/* Create new Keyboard device instance. */
+-	KeyboardDevice(void);
+-
+-	void Press(rdr::U32 keysym) { keyEvent(keysym, true); }
+-	void Release(rdr::U32 keysym) { keyEvent(keysym, false); }
+-private:
+-	void keyEvent(rdr::U32 keysym, bool down);
+-	DeviceIntPtr dev;
+-};
+-
+ #endif
+Index: unix/xserver/hw/vnc/XserverDesktop.cc
+===================================================================
+--- unix/xserver/hw/vnc/XserverDesktop.cc	(revision 4023)
++++ unix/xserver/hw/vnc/XserverDesktop.cc	(revision 4024)
+@@ -164,8 +164,7 @@
+   if (httpListener)
+     httpServer = new FileHTTPServer(this);
+ 
+-  pointerDevice = new PointerDevice(server);
+-  keyboardDevice = new KeyboardDevice();
++  inputDevice = new InputDevice(server);
+ }
+ 
+ XserverDesktop::~XserverDesktop()
+@@ -174,8 +173,7 @@
+     delete [] data;
+   TimerFree(deferredUpdateTimer);
+   TimerFree(dummyTimer);
+-  delete pointerDevice;
+-  delete keyboardDevice;
++  delete inputDevice;
+   delete httpServer;
+   delete server;
+ }
+@@ -586,7 +584,7 @@
+         }
+       }
+ 
+-      pointerDevice->Sync();
++      inputDevice->PointerSync();
+     }
+ 
+     int timeout = server->checkTimeouts();
+@@ -645,8 +643,8 @@
+ 
+ void XserverDesktop::pointerEvent(const Point& pos, int buttonMask)
+ {
+-  pointerDevice->Move(pos);
+-  pointerDevice->ButtonAction(buttonMask);
++  inputDevice->PointerMove(pos);
++  inputDevice->PointerButtonAction(buttonMask);
+ }
+ 
+ void XserverDesktop::clientCutText(const char* str, int len)
+@@ -807,7 +805,7 @@
+ void XserverDesktop::keyEvent(rdr::U32 keysym, bool down)
+ {
+ 	if (down)
+-		keyboardDevice->Press(keysym);
++		inputDevice->KeyboardPress(keysym);
+ 	else
+-		keyboardDevice->Release(keysym);
++		inputDevice->KeyboardRelease(keysym);
+ }
+Index: unix/xserver/hw/vnc/XserverDesktop.h
+===================================================================
+--- unix/xserver/hw/vnc/XserverDesktop.h	(revision 4023)
++++ unix/xserver/hw/vnc/XserverDesktop.h	(revision 4024)
+@@ -122,8 +122,7 @@
+                                             pointer arg);
+   void deferUpdate();
+   ScreenPtr pScreen;
+-  PointerDevice *pointerDevice;
+-  KeyboardDevice *keyboardDevice;
++  InputDevice *inputDevice;
+   OsTimerPtr deferredUpdateTimer, dummyTimer;
+   rfb::VNCServerST* server;
+   rfb::HTTPServer* httpServer;

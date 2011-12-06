@@ -1,0 +1,104 @@
+Index: unix/xserver/hw/vnc/Input.cc
+===================================================================
+--- unix/xserver/hw/vnc/Input.cc	(revision 4024)
++++ unix/xserver/hw/vnc/Input.cc	(revision 4025)
+@@ -119,6 +119,7 @@
+ InputDevice::InputDevice(rfb::VNCServerST *_server)
+ 	: server(_server), oldButtonMask(0)
+ {
++#if XORG < 17
+ 	pointerDev = AddInputDevice(
+ #if XORG >= 16
+ 				    serverClient,
+@@ -132,7 +133,7 @@
+ #endif
+ 				     keyboardProc, TRUE);
+ 	RegisterKeyboardDevice(keyboardDev);
+-
++#endif
+ 	initEventq();
+ }
+ 
+@@ -140,6 +141,8 @@
+ {
+ 	int i, n;
+ 
++	initInputDevice();
++
+ 	for (i = 0; i < BUTTONS; i++) {
+ 		if ((buttonMask ^ oldButtonMask) & (1 << i)) {
+ 			int action = (buttonMask & (1<<i)) ?
+@@ -161,6 +164,8 @@
+ 	if (pos.equals(cursorPos))
+ 		return;
+ 
++	initInputDevice();
++
+ 	valuators[0] = pos.x;
+ 	valuators[1] = pos.y;
+ 	n = GetPointerEvents(eventq, pointerDev, MotionNotify, 0, POINTER_ABSOLUTE, 0,
+@@ -238,6 +243,34 @@
+ 	return Success;
+ }
+ 
++void InputDevice::initInputDevice(void)
++{
++#if XORG >= 17
++	int ret;
++	static int initialized = 0;
++
++	if (initialized != 0)
++		return;
++
++	initialized = 1;
++
++	ret = AllocDevicePair(serverClient, "TigerVNC", &pointerDev,
++			      &keyboardDev, pointerProc, keyboardProc,
++			      FALSE);
++
++	if (ret != Success)
++		FatalError("Failed to initialize TigerVNC input devices\n");
++
++	if (ActivateDevice(pointerDev, TRUE) != Success ||
++	    ActivateDevice(keyboardDev, TRUE) != Success)
++		FatalError("Failed to activate TigerVNC devices\n");
++
++	if (!EnableDevice(pointerDev, TRUE) ||
++	    !EnableDevice(keyboardDev, TRUE))
++		FatalError("Failed to activate TigerVNC devices\n");
++#endif
++}
++
+ #define IS_PRESSED(keyc, keycode) \
+ 	((keyc)->down[(keycode) >> 3] & (1 << ((keycode) & 7)))
+ 
+@@ -463,6 +496,8 @@
+ 	unsigned int i, n;
+ 	int j, k, action, state, maxKeysPerMod;
+ 
++	initInputDevice();
++
+ 	/* 
+ 	 * Since we are checking the current state to determine if we need
+ 	 * to fake modifiers, we must make sure that everything put on the
+Index: unix/xserver/hw/vnc/Input.h
+===================================================================
+--- unix/xserver/hw/vnc/Input.h	(revision 4024)
++++ unix/xserver/hw/vnc/Input.h	(revision 4025)
+@@ -56,6 +56,16 @@
+ 	void KeyboardPress(rdr::U32 keysym) { keyEvent(keysym, true); }
+ 	void KeyboardRelease(rdr::U32 keysym) { keyEvent(keysym, false); }
+ private:
++	/*
++	 * Init input device. This cannot be done in the constructor
++	 * because constructor is called during X server extensions
++	 * initialization. Devices must be initialized after core
++	 * pointer/keyboard initialization which is actually after extesions
++	 * initialization. Check InitExtensions(), InitCoreDevices() and
++	 * InitInput() calls in dix/main.c
++	 */
++	void initInputDevice(void);
++
+ 	void keyEvent(rdr::U32 keysym, bool down);
+ 
+ 	rfb::VNCServerST *server;

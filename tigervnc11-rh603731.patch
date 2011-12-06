@@ -1,0 +1,12 @@
+diff -up tigervnc-1.0.90-20100420svn4030/unix/xserver/hw/vnc/Input.cc.rh597172 tigervnc-1.0.90-20100420svn4030/unix/xserver/hw/vnc/Input.cc
+--- tigervnc-1.0.90-20100420svn4030/unix/xserver/hw/vnc/Input.cc.rh597172	2010-06-10 16:14:57.779534382 +0200
++++ tigervnc-1.0.90-20100420svn4030/unix/xserver/hw/vnc/Input.cc	2010-06-10 16:16:24.317762477 +0200
+@@ -681,6 +681,8 @@ ModeSwitchFound:
+ 	action = down ? KeyPress : KeyRelease;
+ 	n = GetKeyboardEvents(eventq, keyboardDev, action, kc);
+ 	enqueueEvents(keyboardDev, n);
++
++        FREE_MAPS;
+ 	
+ 	/*
+ 	 * When faking a modifier we are putting a keycode (which can

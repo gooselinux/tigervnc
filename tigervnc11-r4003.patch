@@ -1,0 +1,14 @@
+Index: unix/tx/TXImage.cxx
+===================================================================
+--- unix/tx/TXImage.cxx	(revision 4002)
++++ unix/tx/TXImage.cxx	(revision 4003)
+@@ -164,7 +164,8 @@
+ 
+ void TXImage::updateColourMap()
+ {
+-  tig->setColourMapEntries(0, 0, 0);
++  if (tig != 0)
++    tig->setColourMapEntries(0, 0, 0);
+ }
+ 
+ void TXImage::lookup(int index, int* r, int* g, int* b)

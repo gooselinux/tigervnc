@@ -1,0 +1,223 @@
+Index: unix/x0vncserver/x0vncserver.cxx
+===================================================================
+--- unix/x0vncserver/x0vncserver.cxx	(revision 3962)
++++ unix/x0vncserver/x0vncserver.cxx	(revision 3963)
+@@ -447,7 +447,7 @@
+     QueryConnHandler qcHandler(dpy, &server);
+     server.setQueryConnectionHandler(&qcHandler);
+ 
+-    TcpListener listener((int)rfbport);
++    TcpListener listener(NULL, (int)rfbport);
+     vlog.info("Listening on port %d", (int)rfbport);
+ 
+     const char *hostsData = hostsFile.getData();
+Index: unix/xserver/hw/vnc/vncExtInit.cc
+===================================================================
+--- unix/xserver/hw/vnc/vncExtInit.cc	(revision 3962)
++++ unix/xserver/hw/vnc/vncExtInit.cc	(revision 3963)
+@@ -72,6 +72,7 @@
+ 				   pointer args);
+ 
+   extern char *display;
++  extern char *listenaddr;
+ }
+ 
+ using namespace rfb;
+@@ -223,22 +224,24 @@
+           if (network::TcpSocket::isSocket(vncInetdSock) &&
+               !network::TcpSocket::isConnected(vncInetdSock))
+           {
+-            listener = new network::TcpListener(0, 0, vncInetdSock, true);
++            listener = new network::TcpListener(NULL, 0, 0, vncInetdSock, true);
+             vlog.info("inetd wait");
+           }
+         } else {
+           int port = rfbport;
+           if (port == 0) port = 5900 + atoi(display);
+           port += 1000 * scr;
+-          listener = new network::TcpListener(port, localhostOnly);
+-          vlog.info("Listening for VNC connections on port %d",port);
++          listener = new network::TcpListener(listenaddr, port, localhostOnly);
++          vlog.info("Listening for VNC connections on %s interface(s), port %d",
++		    listenaddr == NULL ? "all" : listenaddr, port);
+           CharArray httpDirStr(httpDir.getData());
+           if (httpDirStr.buf[0]) {
+             port = httpPort;
+             if (port == 0) port = 5800 + atoi(display);
+             port += 1000 * scr;
+-            httpListener = new network::TcpListener(port, localhostOnly);
+-            vlog.info("Listening for HTTP connections on port %d",port);
++            httpListener = new network::TcpListener(listenaddr, port, localhostOnly);
++            vlog.info("Listening for HTTP connections on %s interface(s), port %d",
++		      listenaddr == NULL ? "all" : listenaddr, port);
+           }
+         }
+ 
+Index: unix/xserver/hw/vnc/xvnc.cc
+===================================================================
+--- unix/xserver/hw/vnc/xvnc.cc	(revision 3962)
++++ unix/xserver/hw/vnc/xvnc.cc	(revision 3963)
+@@ -164,7 +164,9 @@
+ static bool wellKnownSocketsCreated = false;
+ static char displayNumStr[16];
+ 
++char *listenaddr = NULL;
+ 
++
+ static void
+ vfbInitializePixmapDepths(void)
+ {
+@@ -284,6 +286,7 @@
+     ErrorF("-depth D               set screen 0's depth\n");
+     ErrorF("-pixelformat fmt       set pixel format (rgbNNN or bgrNNN)\n");
+     ErrorF("-inetd                 has been launched from inetd\n");
++    ErrorF("-interface IP_address  listen on specified interface\n");
+     ErrorF("\nVNC parameters:\n");
+ 
+     fprintf(stderr,"\n"
+@@ -306,7 +309,7 @@
+ bool displayNumFree(int num)
+ {
+     try {
+-	network::TcpListener l(6000+num);
++	network::TcpListener l(NULL, 6000+num);
+     } catch (rdr::Exception& e) {
+ 	return false;
+     }
+@@ -544,6 +547,23 @@
+ 	
+ 	return 1;
+     }
++
++    if (strcmp(argv[i], "-interface") == 0 ||
++	strcmp(argv[i], "-i") == 0) {
++	if (++i >= argc) {
++	    UseMsg();
++	    return 2;
++	}
++
++	if (listenaddr != NULL) /* Only first -interface is valid */
++		return 2;
++
++	listenaddr = strdup(argv[i]);
++	if (listenaddr == NULL)
++	    FatalError("Not enough memory");
++
++	return 2;
++    }
+     
+     if (rfb::Configuration::setParam(argv[i]))
+ 	return 1;
+Index: unix/xserver/hw/vnc/Xvnc.man
+===================================================================
+--- unix/xserver/hw/vnc/Xvnc.man	(revision 3962)
++++ unix/xserver/hw/vnc/Xvnc.man	(revision 3963)
+@@ -48,6 +48,10 @@
+ for depth 16 is RGB565 and for depth 24 is RGB888.
+ 
+ .TP
++.B \-interface \fIIP address\fP or \-i \fIIP address\fP
++Listen on interface. By default Xvnc listens on all available interfaces.
++
++.TP
+ .B \-cc 3
+ As an alternative to the default TrueColor visual, this allows you to run an
+ Xvnc server with a PseudoColor visual (i.e. one which uses a color map or
+Index: unix/vncviewer/vncviewer.cxx
+===================================================================
+--- unix/vncviewer/vncviewer.cxx	(revision 3962)
++++ unix/vncviewer/vncviewer.cxx	(revision 3963)
+@@ -370,7 +370,7 @@
+       if (vncServerName && isdigit(vncServerName[0]))
+         port = atoi(vncServerName);
+ 
+-      TcpListener listener(port);
++      TcpListener listener(NULL, port);
+ 
+       vlog.info("Listening on port %d\n",port);
+ 
+Index: common/network/TcpSocket.cxx
+===================================================================
+--- common/network/TcpSocket.cxx	(revision 3962)
++++ common/network/TcpSocket.cxx	(revision 3963)
+@@ -331,8 +331,8 @@
+ }
+ 
+ 
+-TcpListener::TcpListener(int port, bool localhostOnly, int sock, bool close_)
+-  : closeFd(close_)
++TcpListener::TcpListener(const char *listenaddr, int port, bool localhostOnly,
++			 int sock, bool close_) : closeFd(close_)
+ {
+   if (sock != -1) {
+     fd = sock;
+@@ -360,11 +360,24 @@
+   struct sockaddr_in addr;
+   memset(&addr, 0, sizeof(addr));
+   addr.sin_family = AF_INET;
++
++  if (localhostOnly) {
++    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++  } else if (listenaddr != NULL) {
++#ifndef WIN32
++    if (inet_aton(listenaddr, &addr.sin_addr) == 0)
++#else
++    /* Windows doesn't have inet_aton, sigh */
++    if ((addr.sin_addr.s_addr = inet_addr(listenaddr)) == INADDR_NONE)
++#endif
++    {
++      closesocket(fd);
++      throw Exception("invalid network interface address: %s", listenaddr);
++    }
++  } else
++    addr.sin_addr.s_addr = htonl(INADDR_ANY); /* Bind to 0.0.0.0 by default. */
++
+   addr.sin_port = htons(port);
+-  if (localhostOnly)
+-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+-  else
+-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+   if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+     int e = errorNumber;
+     closesocket(fd);
+Index: common/network/TcpSocket.h
+===================================================================
+--- common/network/TcpSocket.h	(revision 3962)
++++ common/network/TcpSocket.h	(revision 3963)
+@@ -65,8 +65,8 @@
+ 
+   class TcpListener : public SocketListener {
+   public:
+-    TcpListener(int port, bool localhostOnly=false, int sock=-1,
+-                bool close=true);
++    TcpListener(const char *listenaddr, int port, bool localhostOnly=false,
++		int sock=-1, bool close=true);
+     virtual ~TcpListener();
+ 
+     virtual void shutdown();
+Index: win/winvnc/ManagedListener.cxx
+===================================================================
+--- win/winvnc/ManagedListener.cxx	(revision 3962)
++++ win/winvnc/ManagedListener.cxx	(revision 3963)
+@@ -77,7 +77,7 @@
+     return;
+   try {
+     if (port)
+-      sock = new network::TcpListener(port, localOnly);
++      sock = new network::TcpListener(NULL, port, localOnly);
+   } catch (rdr::Exception& e) {
+     vlog.error(e.str());
+   }
+Index: win/vncviewer/vncviewer.cxx
+===================================================================
+--- win/vncviewer/vncviewer.cxx	(revision 3962)
++++ win/vncviewer/vncviewer.cxx	(revision 3963)
+@@ -239,7 +239,7 @@
+         ListenTrayIcon tray;
+ 
+         // Listen for reverse connections
+-        network::TcpListener sock(port);
++        network::TcpListener sock(NULL, port);
+         ListenServer listener(&sock);
+ 
+         // Run the view manager

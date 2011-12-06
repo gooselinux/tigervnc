@@ -1,0 +1,12 @@
+diff -up tigervnc-1.0.90-20100420svn4030/unix/vncserver.options tigervnc-1.0.90-20100420svn4030/unix/vncserver
+--- tigervnc-1.0.90-20100420svn4030/unix/vncserver.options	2010-06-28 15:38:22.362275199 +0200
++++ tigervnc-1.0.90-20100420svn4030/unix/vncserver	2010-06-28 15:40:05.277332830 +0200
+@@ -176,7 +176,7 @@ if ((@ARGV > 0) && ($ARGV[0] =~ /^:(\d+)
+     if (!&CheckDisplayNumber($displayNumber)) {
+ 	die "A VNC server is already running as :$displayNumber\n";
+     }
+-} elsif ((@ARGV > 0) && ($ARGV[0] !~ /^-/)) {
++} elsif ((@ARGV > 0) && ($ARGV[0] !~ /^-/) && ($ARGV[0] !~ /^\+/)) {
+     &Usage();
+ } else {
+     $displayNumber = &GetDisplayNumber();

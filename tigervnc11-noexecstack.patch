@@ -1,0 +1,13 @@
+diff -up tigervnc-1.0.90-20091221svn3929/common/jpeg/simd/jsimdext.inc.noexecstack tigervnc-1.0.90-20091221svn3929/common/jpeg/simd/jsimdext.inc
+--- tigervnc-1.0.90-20091221svn3929/common/jpeg/simd/jsimdext.inc.noexecstack	2010-01-22 10:52:35.968632745 +0100
++++ tigervnc-1.0.90-20091221svn3929/common/jpeg/simd/jsimdext.inc	2010-01-22 10:56:50.877629306 +0100
+@@ -53,6 +53,9 @@
+ ; * *BSD family Unix using elf format
+ ; * Unix System V, including Solaris x86, UnixWare and SCO Unix
+ 
++; mark stack as non-executable
++section .note.GNU-stack noalloc noexec nowrite progbits
++
+ ; -- segment definition --
+ ;
+ %ifdef __x86_64__
